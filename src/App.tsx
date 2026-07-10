@@ -1,3 +1,5 @@
+'use client'
+
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { hierarchy, treemap } from 'd3-hierarchy'
 import {
@@ -18,7 +20,6 @@ import {
   Target,
   X,
 } from 'lucide-react'
-import './App.css'
 import { categories, questions, workerProfiles, type BusinessCategory, type QuestionOption, type Segment } from './data'
 
 type AnswerMap = Record<string, QuestionOption>
