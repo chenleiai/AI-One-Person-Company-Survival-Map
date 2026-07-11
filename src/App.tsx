@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { type FocusEvent, type PointerEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { hierarchy, treemap } from 'd3-hierarchy'
 import {
   BarChart3,
@@ -65,6 +65,11 @@ type TreeLeaf = {
   value: number
 }
 
+type FloatingPoint = {
+  x: number
+  y: number
+}
+
 const dimensions = [
   { key: 'businessScore', label: '生存资产', icon: Target },
   { key: 'aiScore', label: 'AI员工配置', icon: Bot },
@@ -76,23 +81,33 @@ const dimensions = [
 const modelPrinciples = [
   {
     title: '可替代压力',
-    text: '越依赖重复执行、信息搬运、标准沟通，越容易被 AI 或会用 AI 的人压缩价值。',
+    question: '重复劳动',
+    text: '写稿、整理、回复、表格，越重复越容易被重估。',
+    action: '先替代 3 个动作',
   },
   {
     title: 'AI员工密度',
-    text: '未来竞争不是一个人对一个人，而是一个人能不能带着 AI 研究员、销售、助理和复盘官一起工作。',
+    question: '固定角色',
+    text: '不是会用工具，而是有没有 AI 研究员、销售、助理。',
+    action: '先配 1 个员工',
   },
   {
     title: '流程资产',
-    text: '没有 SOP 的经验只能靠人硬扛，有 SOP 的经验才可能被 AI 放大、复制和持续改进。',
+    question: '可复制 SOP',
+    text: '经验能写成步骤，AI 才能稳定接活、反复交付。',
+    action: '沉淀 1 条流程',
   },
   {
     title: '获客入口',
-    text: '没有稳定入口的人，会越来越依赖平台、老板、甲方和运气。',
+    question: '持续线索',
+    text: '没有入口，就只能等平台、老板、甲方和运气。',
+    action: '锁定 1 个入口',
   },
   {
-    title: '现金流韧性',
-    text: '一次性交付会被卷，能复购、订阅、长期服务的人，才有机会扛住 AI 时代的价格重估。',
+    title: '现金韧性',
+    question: '复购续费',
+    text: '一次性交付会被卷，长期现金流才抗压。',
+    action: '改成月服务',
   },
 ]
 
@@ -308,7 +323,7 @@ function TreemapView({
 }: {
   selected: TreeLeaf | null
   onSelect: (leaf: TreeLeaf) => void
-  onPreview: (leaf: TreeLeaf) => void
+  onPreview: (leaf: TreeLeaf, point: FloatingPoint) => void
   onClearPreview: () => void
 }) {
   const frameRef = useRef<HTMLDivElement | null>(null)
@@ -375,7 +390,15 @@ function TreemapView({
           const showCompactScore = compact && !tiny && width >= 76 && height >= 82
           const label = fitTreemapLabel(data.name, width)
           const labelX = compact ? 8 : 10
-          const previewNode = () => onPreview(data)
+          const previewNode = (event: PointerEvent<SVGGElement> | FocusEvent<SVGGElement>) => {
+            const rect = event.currentTarget.getBoundingClientRect()
+            const point =
+              'clientX' in event && event.clientX
+                ? { x: event.clientX, y: event.clientY }
+                : { x: rect.left + Math.min(rect.width * 0.6, 96), y: rect.top + Math.min(rect.height * 0.45, 72) }
+
+            onPreview(data, point)
+          }
           return (
             <g
               key={data.id}
@@ -383,8 +406,6 @@ function TreemapView({
               transform={`translate(${node.x0}, ${node.y0})`}
               onPointerEnter={previewNode}
               onPointerMove={previewNode}
-              onMouseEnter={previewNode}
-              onMouseMove={previewNode}
               onFocus={previewNode}
               onClick={() => onSelect(data)}
               tabIndex={0}
@@ -448,11 +469,46 @@ function TreemapView({
   )
 }
 
-function HoverDetailCard({ segment }: { segment: TreeLeaf | null }) {
+function HoverDetailCard({ segment, position }: { segment: TreeLeaf | null; position: FloatingPoint | null }) {
+  const cardRef = useRef<HTMLElement | null>(null)
+  const [style, setStyle] = useState({ left: 0, top: 0, opacity: 0 })
+
+  useLayoutEffect(() => {
+    if (!segment || !position || !cardRef.current) return
+
+    const gap = 16
+    const margin = 12
+    const rect = cardRef.current.getBoundingClientRect()
+    const viewportWidth = window.innerWidth
+    const viewportHeight = window.innerHeight
+
+    let left = position.x + gap
+    if (left + rect.width + margin > viewportWidth) {
+      left = position.x - rect.width - gap
+    }
+
+    let top = position.y + gap
+    if (top + rect.height + margin > viewportHeight) {
+      top = position.y - rect.height - gap
+    }
+
+    const nextStyle = {
+      left: Math.round(clamp(left, margin, viewportWidth - rect.width - margin)),
+      top: Math.round(clamp(top, margin, viewportHeight - rect.height - margin)),
+      opacity: 1,
+    }
+
+    setStyle((current) =>
+      current.left === nextStyle.left && current.top === nextStyle.top && current.opacity === nextStyle.opacity
+        ? current
+        : nextStyle,
+    )
+  }, [position, segment])
+
   if (!segment) return null
 
   return (
-    <aside className="hover-detail-card" aria-live="polite">
+    <aside ref={cardRef} className="hover-detail-card" style={style} aria-live="polite">
       <div className="hover-detail-head">
         <div>
           <span>{segment.parentName}</span>
@@ -1137,27 +1193,74 @@ function ReportView({ report, onReset }: { report: Report; onReset: () => void }
 }
 
 function CaseLibrary() {
+  const totalCases = categories.reduce((sum, category) => sum + categoryCaseTotal(category), 0)
+  const totalSegments = categories.reduce((sum, category) => sum + category.segments.length, 0)
+  const averagePressure = Math.round(categories.reduce((sum, category) => sum + category.adoptionSpace, 0) / categories.length)
+  const averageMaturity = Math.round(categories.reduce((sum, category) => sum + category.aiMaturity, 0) / categories.length)
+
   return (
     <section className="case-library">
-      <div className="section-header">
-        <span className="eyebrow">案例库样例</span>
-        <h2>公开案例样本，最终沉淀成全网 AI 一人公司样本库</h2>
-        <p>第一版先用结构化样本展示模型。后续可以持续导入中国和海外案例，让每个人都能在里面找到自己的位置。</p>
+      <div className="case-library-head">
+        <div className="section-header">
+          <span className="eyebrow">公开案例样板</span>
+          <h2>全网案例热力图</h2>
+          <p>看样本、看压力、看差距。用户只要找到自己的行业，就能看到正在发生的变化。</p>
+        </div>
+        <div className="case-library-stats" aria-label="案例库总体统计">
+          <div>
+            <strong>{formatCount(totalCases)}</strong>
+            <span>公开样本</span>
+          </div>
+          <div>
+            <strong>{totalSegments}</strong>
+            <span>细分模式</span>
+          </div>
+          <div>
+            <strong>{averagePressure}%</strong>
+            <span>平均重构压力</span>
+          </div>
+          <div>
+            <strong>{averageMaturity}%</strong>
+            <span>平均AI化</span>
+          </div>
+        </div>
       </div>
       <div className="library-grid">
-        {categories.map((category) => (
-          <article className="library-item" key={category.id}>
+        {categories.map((category, index) => {
+          const sampleTotal = categoryCaseTotal(category)
+          const sizeClass = sampleTotal >= 10 ? 'is-wide' : sampleTotal >= 7 ? 'is-tall' : 'is-compact'
+          const pressureClass = category.adoptionSpace >= 84 ? 'is-hot' : category.adoptionSpace >= 75 ? 'is-warning' : 'is-steady'
+
+          return (
+          <article className={`library-item ${sizeClass} ${pressureClass}`} key={category.id}>
             <div className="library-top">
-              <h3>{category.name}</h3>
-              <span>{formatCount(categoryCaseTotal(category))} 个样本</span>
+              <span>{String(index + 1).padStart(2, '0')}</span>
+              <div>
+                <h3>{category.name}</h3>
+                <p>{category.description}</p>
+              </div>
+              <strong>{formatCount(sampleTotal)}样本</strong>
             </div>
-            <p>{category.description}</p>
-            <div className="library-meta">
-              <span>AI化 {formatPercent(category.aiMaturity)}</span>
-              <span>重构压力 {formatPercent(category.adoptionSpace)}</span>
+            <div className="library-heat">
+              <div>
+                <span>AI化</span>
+                <strong>{formatPercent(category.aiMaturity)}</strong>
+                <em style={{ width: `${category.aiMaturity}%` }} />
+              </div>
+              <div>
+                <span>重构压力</span>
+                <strong>{formatPercent(category.adoptionSpace)}</strong>
+                <em style={{ width: `${category.adoptionSpace}%` }} />
+              </div>
+            </div>
+            <div className="library-segments">
+              {category.segments.slice(0, 4).map((segment) => (
+                <span key={segment.id}>{segment.name}</span>
+              ))}
             </div>
           </article>
-        ))}
+          )
+        })}
       </div>
     </section>
   )
@@ -1167,10 +1270,10 @@ function ModelExplainer() {
   return (
     <section className="model-section" id="model">
       <div className="section-header">
-        <span className="eyebrow">生存体检模型</span>
-        <h2>未来不是 AI 替代你，而是“一个人带 AI 团队”的人替代你</h2>
+        <span className="eyebrow">生存体验模式</span>
+        <h2>五项体验：你能不能被 AI 放大</h2>
         <p>
-          这份报告采用五维评分：可替代压力、AI员工密度、流程资产、获客入口、现金流韧性。它要回答的不是你会不会用 AI，而是你在 AI 一人公司时代还能不能守住自己的位置。
+          重估压力 / AI员工 / 流程资产 / 获客入口 / 现金韧性
         </p>
       </div>
       <div className="principle-grid">
@@ -1178,7 +1281,9 @@ function ModelExplainer() {
           <article className="principle-card" key={item.title}>
             <span>{String(index + 1).padStart(2, '0')}</span>
             <h3>{item.title}</h3>
+            <strong>{item.question}</strong>
             <p>{item.text}</p>
+            <em>{item.action}</em>
           </article>
         ))}
       </div>
@@ -1189,6 +1294,7 @@ function ModelExplainer() {
 function App() {
   const [selected, setSelected] = useState<TreeLeaf | null>(() => buildTreeLeaves()[0])
   const [hoverDetail, setHoverDetail] = useState<TreeLeaf | null>(null)
+  const [hoverPoint, setHoverPoint] = useState<FloatingPoint | null>(null)
   const [activeDetail, setActiveDetail] = useState<TreeLeaf | null>(null)
   const [answers, setAnswers] = useState<AnswerMap>({})
   const [report, setReport] = useState<Report | null>(null)
@@ -1252,16 +1358,20 @@ function App() {
               setSelected(leaf)
               setActiveDetail(leaf)
             }}
-            onPreview={(leaf) => {
+            onPreview={(leaf, point) => {
               setSelected((current) => (current?.id === leaf.id ? current : leaf))
               setHoverDetail((current) => (current?.id === leaf.id ? current : leaf))
+              setHoverPoint(point)
             }}
-            onClearPreview={() => setHoverDetail(null)}
+            onClearPreview={() => {
+              setHoverDetail(null)
+              setHoverPoint(null)
+            }}
           />
         </div>
       </section>
 
-      <HoverDetailCard segment={activeDetail ? null : hoverDetail} />
+      <HoverDetailCard segment={activeDetail ? null : hoverDetail} position={activeDetail ? null : hoverPoint} />
       <DetailDrawer segment={activeDetail} onClose={() => setActiveDetail(null)} />
 
       <Survey answers={answers} setAnswers={setAnswers} onFinish={generateReport} />
