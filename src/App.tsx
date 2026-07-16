@@ -914,14 +914,16 @@ async function drawShareQr(ctx: CanvasRenderingContext2D, x: number, y: number) 
   })
   const qrImage = await loadCanvasImage(qrDataUrl)
 
-  fillRoundRect(ctx, x, y, 236, 258, 20, '#f4f1e7', 'rgba(232,197,90,0.46)')
+  fillRoundRect(ctx, x, y, 236, 240, 20, '#f4f1e7', 'rgba(232,197,90,0.46)')
+  ctx.textAlign = 'center'
   ctx.fillStyle = '#0c0e14'
   ctx.font = '900 25px "PingFang SC", "Noto Sans SC", sans-serif'
-  ctx.fillText('扫码生成', x + 28, y + 42)
+  ctx.fillText('扫码生成', x + 118, y + 42)
   ctx.fillStyle = '#d4622a'
   ctx.font = '900 21px "PingFang SC", "Noto Sans SC", sans-serif'
-  ctx.fillText('自己的体检报告', x + 28, y + 72)
-  ctx.drawImage(qrImage, x + 34, y + 80, 168, 168)
+  ctx.fillText('自己的体检报告', x + 118, y + 70)
+  ctx.textAlign = 'left'
+  ctx.drawImage(qrImage, x + 42, y + 82, 152, 152)
 }
 
 async function makeShareImage(report: Report, worker: (typeof workerProfiles)[WorkerKey]) {
@@ -1001,7 +1003,7 @@ async function makeShareImage(report: Report, worker: (typeof workerProfiles)[Wo
     drawShareBar(ctx, dimension.label, report[dimension.key], barsX, barsY + index * barRowGap, 642)
   })
 
-  await drawShareQr(ctx, 780, 1088)
+  await drawShareQr(ctx, 780, 1106)
 
   ctx.fillStyle = '#eaeaea'
   ctx.font = '900 26px "PingFang SC", "Noto Sans SC", sans-serif'
@@ -1010,12 +1012,14 @@ async function makeShareImage(report: Report, worker: (typeof workerProfiles)[Wo
   ctx.font = '700 22px "PingFang SC", "Noto Sans SC", sans-serif'
   ctx.fillText('@陈磊历险记 | 《AI一人公司》生存地图', 64, 1424)
 
-  return new Promise<Blob>((resolve, reject) => {
+  const dataUrl = canvas.toDataURL('image/png')
+  const blob = await new Promise<Blob>((resolve, reject) => {
     canvas.toBlob((blob) => {
       if (blob) resolve(blob)
       else reject(new Error('生成图片失败'))
     }, 'image/png')
   })
+  return { blob, dataUrl }
 }
 
 function shareFileName(report: Report) {
@@ -1046,23 +1050,27 @@ async function sharePosterBlob(blob: Blob, fileName: string) {
   downloadBlob(blob, fileName)
 }
 
+function shouldUseLongPressPosterSave() {
+  if (typeof navigator === 'undefined') return false
+  return /MicroMessenger|iPhone|iPad|iPod|Android|Mobile/i.test(navigator.userAgent)
+}
+
 function ReportView({ report, onReset }: { report: Report; onReset: () => void }) {
   const worker = workerProfiles[report.workerKey]
   const [poster, setPoster] = useState<SharePoster | null>(null)
+  const [preferLongPressSave, setPreferLongPressSave] = useState(false)
 
   useEffect(() => {
-    return () => {
-      if (poster?.url) URL.revokeObjectURL(poster.url)
-    }
-  }, [poster?.url])
+    setPreferLongPressSave(shouldUseLongPressPosterSave())
+  }, [])
 
   const handleCreatePoster = async () => {
     try {
-      const blob = await makeShareImage(report, worker)
+      const posterImage = await makeShareImage(report, worker)
       setPoster({
-        blob,
+        blob: posterImage.blob,
         fileName: shareFileName(report),
-        url: URL.createObjectURL(blob),
+        url: posterImage.dataUrl,
       })
     } catch (error) {
       console.error(error)
@@ -1070,14 +1078,18 @@ function ReportView({ report, onReset }: { report: Report; onReset: () => void }
     }
   }
 
-  const handleSharePoster = async () => {
+  const handlePosterPrimaryAction = async () => {
     if (!poster) return
+    if (preferLongPressSave) {
+      window.alert('请长按上方海报图片，选择“保存图片”，再发朋友圈。')
+      return
+    }
 
     try {
       await sharePosterBlob(poster.blob, poster.fileName)
     } catch (error) {
       console.error(error)
-      window.alert('分享失败，请先保存图片后再发朋友圈。')
+      window.alert('系统分享失败，请先保存图片后再发朋友圈。')
     }
   }
 
@@ -1224,16 +1236,20 @@ function ReportView({ report, onReset }: { report: Report; onReset: () => void }
             </div>
             <img className="poster-preview" src={poster.url} alt="AI一人公司生存体检朋友圈海报" />
             <div className="poster-actions">
-              <button className="primary-action" type="button" onClick={() => void handleSharePoster()}>
+              <button className="primary-action" type="button" onClick={() => void handlePosterPrimaryAction()}>
                 <Share2 size={18} />
-                分享朋友圈
+                {preferLongPressSave ? '长按海报保存' : '分享图片'}
               </button>
               <button className="secondary-action" type="button" onClick={handleSavePoster}>
                 <FileText size={18} />
                 保存图片
               </button>
             </div>
-            <p className="poster-note">海报已带扫码入口；微信环境可直接调起分享，普通浏览器会保存 PNG 图片。</p>
+            <p className="poster-note">
+              {preferLongPressSave
+                ? '海报已带扫码入口。iPhone/微信里请长按上方海报保存；如果长按无效，再点“保存图片”。'
+                : '海报已带扫码入口；可用系统分享，或保存 PNG 图片后发布朋友圈。'}
+            </p>
           </div>
         </div>
       )}
