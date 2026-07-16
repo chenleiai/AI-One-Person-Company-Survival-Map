@@ -2,6 +2,7 @@
 
 import { type FocusEvent, type PointerEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { hierarchy, treemap } from 'd3-hierarchy'
+import * as QRCode from 'qrcode'
 import {
   BarChart3,
   Bot,
@@ -69,6 +70,9 @@ type FloatingPoint = {
   x: number
   y: number
 }
+
+const canonicalSurveyUrl = 'https://chenleiai.github.io/AI-One-Person-Company-Survival-Map/#survey'
+const localHostnames = new Set(['localhost', '127.0.0.1', '0.0.0.0'])
 
 const dimensions = [
   { key: 'businessScore', label: '生存资产', icon: Target },
@@ -877,6 +881,49 @@ function drawShareBar(ctx: CanvasRenderingContext2D, label: string, value: numbe
   ctx.textBaseline = 'alphabetic'
 }
 
+function getPosterEntryUrl() {
+  if (typeof window === 'undefined') return canonicalSurveyUrl
+  if (localHostnames.has(window.location.hostname) || window.location.hostname.startsWith('192.168.')) {
+    return canonicalSurveyUrl
+  }
+
+  const entryUrl = new URL(window.location.href)
+  entryUrl.hash = 'survey'
+  entryUrl.search = ''
+  return entryUrl.toString()
+}
+
+function loadCanvasImage(src: string) {
+  return new Promise<HTMLImageElement>((resolve, reject) => {
+    const image = new Image()
+    image.onload = () => resolve(image)
+    image.onerror = () => reject(new Error('二维码加载失败'))
+    image.src = src
+  })
+}
+
+async function drawShareQr(ctx: CanvasRenderingContext2D, x: number, y: number) {
+  const qrDataUrl = await QRCode.toDataURL(getPosterEntryUrl(), {
+    errorCorrectionLevel: 'M',
+    margin: 2,
+    width: 168,
+    color: {
+      dark: '#0c0e14',
+      light: '#ffffff',
+    },
+  })
+  const qrImage = await loadCanvasImage(qrDataUrl)
+
+  fillRoundRect(ctx, x, y, 236, 258, 20, '#f4f1e7', 'rgba(232,197,90,0.46)')
+  ctx.fillStyle = '#0c0e14'
+  ctx.font = '900 25px "PingFang SC", "Noto Sans SC", sans-serif'
+  ctx.fillText('扫码生成', x + 28, y + 42)
+  ctx.fillStyle = '#d4622a'
+  ctx.font = '900 21px "PingFang SC", "Noto Sans SC", sans-serif'
+  ctx.fillText('自己的体检报告', x + 28, y + 72)
+  ctx.drawImage(qrImage, x + 34, y + 80, 168, 168)
+}
+
 async function makeShareImage(report: Report, worker: (typeof workerProfiles)[WorkerKey]) {
   const canvas = document.createElement('canvas')
   canvas.width = 1080
@@ -947,12 +994,14 @@ async function makeShareImage(report: Report, worker: (typeof workerProfiles)[Wo
   ctx.font = '900 34px "PingFang SC", "Noto Sans SC", sans-serif'
   ctx.fillText(worker.name, 576, 1048)
 
-  const barsX = 82
-  const barsY = 1088
-  const barRowGap = 54
+  const barsX = 64
+  const barsY = 1096
+  const barRowGap = 50
   dimensions.forEach((dimension, index) => {
-    drawShareBar(ctx, dimension.label, report[dimension.key], barsX, barsY + index * barRowGap, 916)
+    drawShareBar(ctx, dimension.label, report[dimension.key], barsX, barsY + index * barRowGap, 642)
   })
+
+  await drawShareQr(ctx, 780, 1088)
 
   ctx.fillStyle = '#eaeaea'
   ctx.font = '900 26px "PingFang SC", "Noto Sans SC", sans-serif'
@@ -1184,7 +1233,7 @@ function ReportView({ report, onReset }: { report: Report; onReset: () => void }
                 保存图片
               </button>
             </div>
-            <p className="poster-note">微信环境可直接调起分享；普通浏览器会保存 PNG 图片，保存后再发朋友圈。</p>
+            <p className="poster-note">海报已带扫码入口；微信环境可直接调起分享，普通浏览器会保存 PNG 图片。</p>
           </div>
         </div>
       )}
